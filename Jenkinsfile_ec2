@@ -1,0 +1,50 @@
+node{
+    echo "${workspace}"
+    echo "${env.BRANCH_NAME}"
+    echo "${env.TAG_NAME}"
+    echo "${env.JOB_NAME}"
+
+    
+    stage("clone"){
+	tag = env.TAG_NAME
+	    echo "${tag}"
+	    if (tag == null){
+            	git branch: env.BRANCH_NAME, credentialsId: 'bitbucket', url: '$github_url'
+	    }
+	    else{
+		    //git branch: env.TAG_NAME, url: '$github_url'
+	    	git credentialsId: 'bitbucket', url: '$github_url'
+	    	sh "git checkout tags/${tag}"
+	    }
+		
+    }
+     stage("build"){
+        def mavenHome = tool name: "Maven363", type: "maven"
+        def mavenCMD = "${mavenHome}/bin/mvn "
+        sh "${mavenCMD} clean package"
+    }
+    stage("deploy"){
+        def pom = readMavenPom file: 'pom.xml'
+        filesByGlob = findFiles(glob: "target/*.${pom.packaging}");
+	artifactPath = filesByGlob[0].path;
+        echo "Path: ${artifactPath}"
+	switch(env.BRANCH_NAME){
+		case "develop":
+			nexusArtifactUploader artifacts: [[artifactId: pom.artifactId, classifier: '', file: artifactPath, type: pom.packaging]], credentialsId: 'nexus', groupId: pom.groupId, nexusUrl: '$nexus_url', nexusVersion: 'nexus3', protocol: 'http', repository: 'dev', version: pom.version
+		        sh "ansible-playbook -e env=dev -e artifact=${pom.artifactId} -e packaging=${pom.packaging} deploy.yaml"
+			break
+		case "release":
+			nexusArtifactUploader artifacts: [[artifactId: pom.artifactId, classifier: '', file: artifactPath, type: pom.packaging]], credentialsId: 'nexus', groupId: pom.groupId, nexusUrl: '$nexus_url', nexusVersion: 'nexus3', protocol: 'http', repository: 'qa', version: pom.version
+			sh "ansible-playbook -e env=qa -e artifact=${pom.artifactId} -e packaging=${pom.packaging} deploy.yaml"
+			break
+		case "master":
+			nexusArtifactUploader artifacts: [[artifactId: pom.artifactId, classifier: '', file: artifactPath, type: pom.packaging]], credentialsId: 'nexus', groupId: pom.groupId, nexusUrl: '$nexus_url', nexusVersion: 'nexus3', protocol: 'http', repository: 'stage', version: pom.version
+		        sh "ansible-playbook -e env=stage -e artifact=${pom.artifactId} -e packaging=${pom.packaging} deploy.yaml"
+			break
+		default:
+			nexusArtifactUploader artifacts: [[artifactId: pom.artifactId, classifier: '', file: artifactPath, type: pom.packaging]], credentialsId: 'nexus', groupId: pom.groupId, nexusUrl: '$nexus_url', nexusVersion: 'nexus3', protocol: 'http', repository: 'prod', version: pom.version
+		        sh "ansible-playbook -e env=prod -e artifact=${pom.artifactId} -e packaging=${pom.packaging} deploy.yaml"
+			break
+	}
+    }
+}
